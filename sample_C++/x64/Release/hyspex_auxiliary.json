@@ -1,0 +1,16 @@
+{
+  "hyspex_version": 1,
+  "stages":
+  {
+    "Test stage":
+    {
+      "driver": "standa",
+      "type": "rotation",
+      "purpose": "recording",
+      "units": "degrees",
+      "maxspeed": 12.0,
+      "conversion_factor": 100.0,
+      "description": "Unknown stage, might have to modify conversion_factor and/or maxspeed, rotation is usually 100.0 while translation uses 200.0"
+    }
+  }
+}

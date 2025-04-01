@@ -1,0 +1,40 @@
+{
+  "hyspex_version": 1,
+  "stages":
+  {
+    "Translation demo stage":
+    {
+      "driver": "standa",
+      "type": "translation",
+      "purpose": "recording",
+	  "serialnumber": "5675",
+      "units": "cm",
+      "maxspeed": 12.0,
+      "conversion_factor": -200.0,
+      "start_position": 0.0,
+      "end_position": 55.0,
+      "movement_speed": 5.0,
+	  "acceleration": 40.0,
+	  "deceleration": 50.0,
+      "homing_supported": true,
+      "description": "Standa translation stage, lab."
+    },
+	"Rotation demo stage":
+    {
+      "driver": "standa",
+      "type": "rotation",
+      "purpose": "recording",
+	  "serialnumber": "10707",
+      "units": "deg",
+      "maxspeed": 12.0,
+      "conversion_factor": 66.666666,
+      "start_position": -180.0,
+      "end_position": 180.0,
+      "movement_speed": 5.0,
+	  "acceleration": 4.0,
+	  "deceleration": 5.0,
+      "homing_supported": true,
+      "description": "Standa rotation stage, lab."
+    }
+  }
+}
