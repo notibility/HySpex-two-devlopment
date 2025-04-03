@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import logging
 import matplotlib
+import re
 
 # 设置matplotlib中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
@@ -18,12 +19,19 @@ class HySpexFileAnalyzer:
     def __init__(self):
         self.reader = None
         self.file_path = None
+        self.hdr_path = None
         self.properties = {}
         self.matrices = {}
         self.int_matrices = {}
         self.image_info = {}
         self.spatial_size = None
         self.spectral_size = None
+        self.wavelength_start = None
+        self.wavelength_end = None
+        self.wavelength_unit = None
+        self.wavelengths = None
+        self.acquisition_info = {}
+        self.camera_info = {}
 
     def open_file(self, file_path):
         """打开HYSPEX文件"""
@@ -384,8 +392,107 @@ class HySpexFileAnalyzer:
         except Exception as e:
             logger.error(f"显示波段切片时出错: {str(e)}")
 
+    def read_hdr_file(self, hdr_path):
+        """读取HDR文件
+        Args:
+            hdr_path: HDR文件路径
+        """
+        try:
+            self.hdr_path = Path(hdr_path)
+            if not self.hdr_path.exists():
+                raise FileNotFoundError(f"HDR文件不存在: {self.hdr_path}")
+
+            logger.info(f"\n正在读取HDR文件: {self.hdr_path}")
+            
+            with open(self.hdr_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # 解析描述信息
+            description_match = re.search(r'description = { (.*?) }', content, re.DOTALL)
+            if description_match:
+                desc_content = description_match.group(1)
+                for line in desc_content.split('\n'):
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        self.camera_info[key.strip()] = value.strip()
+
+            # 解析基本参数
+            self.acquisition_info['samples'] = int(re.search(r'samples = (\d+)', content).group(1))
+            self.acquisition_info['lines'] = int(re.search(r'lines = (\d+)', content).group(1))
+            self.acquisition_info['bands'] = int(re.search(r'bands = (\d+)', content).group(1))
+            self.acquisition_info['data_type'] = int(re.search(r'data type = (\d+)', content).group(1))
+            self.acquisition_info['interleave'] = re.search(r'interleave = (\w+)', content).group(1)
+            self.acquisition_info['byte_order'] = int(re.search(r'byte order = (\d+)', content).group(1))
+            
+            # 解析波长信息
+            try:
+                # 首先获取波长单位
+                self.wavelength_unit = re.search(r'wavelength units = (\w+)', content).group(1)
+                
+                # 获取波长数据部分
+                wavelength_match = re.search(r'wavelength\s*=\s*{([^}]+)}', content, re.DOTALL)
+                if wavelength_match:
+                    wavelength_str = wavelength_match.group(1)
+                    # 清理波长字符串，移除多余的空白字符和换行符
+                    wavelength_str = re.sub(r'\s+', ' ', wavelength_str).strip()
+                    # 分割并转换为浮点数
+                    self.wavelengths = np.array([float(x.strip()) for x in wavelength_str.split(',')])
+                    logger.info(f"成功解析波长信息: {len(self.wavelengths)}个波长值")
+                    logger.info(f"波长范围: {self.wavelengths[0]:.1f} - {self.wavelengths[-1]:.1f} {self.wavelength_unit}")
+                else:
+                    logger.warning("未找到波长信息")
+            except Exception as e:
+                logger.warning(f"解析波长信息时出错: {str(e)}")
+                logger.warning(f"错误详情: {str(e)}")
+
+            # 解析采集时间
+            self.acquisition_info['date'] = re.search(r'acquisition date = (.*?)\n', content).group(1)
+            self.acquisition_info['start_time'] = re.search(r'acquisition start time = (.*?)\n', content).group(1)
+
+            # 打印重要信息
+            self._print_info()
+
+        except Exception as e:
+            logger.error(f"读取HDR文件时出错: {str(e)}")
+            logger.error(f"错误详情: {str(e)}")
+
+    def _print_info(self):
+        """打印HDR文件中的重要信息"""
+        logger.info("\nHDR文件信息:")
+        logger.info("1. 基本参数:")
+        logger.info(f"  空间分辨率: {self.acquisition_info['samples']} x {self.acquisition_info['lines']}")
+        logger.info(f"  波段数量: {self.acquisition_info['bands']}")
+        logger.info(f"  数据格式: {self.acquisition_info['interleave']}")
+        logger.info(f"  数据类型: {self.acquisition_info['data_type']}")
+
+        logger.info("\n2. 波长信息:")
+        if self.wavelengths is not None:
+            logger.info(f"  波长范围: {self.wavelengths[0]:.1f} - {self.wavelengths[-1]:.1f} {self.wavelength_unit}")
+            logger.info(f"  波长分辨率: {(self.wavelengths[-1] - self.wavelengths[0]) / (len(self.wavelengths) - 1):.3f} {self.wavelength_unit}/band")
+        else:
+            logger.info("  未找到波长信息")
+
+        logger.info("\n3. 相机参数:")
+        logger.info(f"  相机型号: {self.camera_info.get('ID', 'Unknown')}")
+        logger.info(f"  序列号: {self.camera_info.get('Serialnumber', 'Unknown')}")
+        logger.info(f"  积分时间: {self.camera_info.get('Integration time', 'Unknown')} μs")
+        logger.info(f"  扫描模式: {self.camera_info.get('Scanningmode', 'Unknown')}")
+        logger.info(f"  镜头: {self.camera_info.get('Lens', 'Unknown')}")
+        logger.info(f"  相机配置: {self.camera_info.get('Camera configuration (lens/filter/gain)', 'Unknown')}")
+
+        logger.info("\n4. 采集信息:")
+        logger.info(f"  采集日期: {self.acquisition_info['date']}")
+        logger.info(f"  采集时间: {self.acquisition_info['start_time']}")
+        logger.info(f"  帧周期: {self.camera_info.get('Frameperiod', 'Unknown')}")
+        logger.info(f"  帧数: {self.camera_info.get('Number of frames', 'Unknown')}")
+
+        logger.info("\n5. 其他参数:")
+        logger.info(f"  像素大小: x = {self.camera_info.get('Pixelsize x', 'Unknown')}, y = {self.camera_info.get('Pixelsize y', 'Unknown')}")
+        logger.info(f"  光圈大小: {self.camera_info.get('Aperture size', 'Unknown')}")
+        logger.info(f"  背景帧数: {self.camera_info.get('Number of background', 'Unknown')}")
+
     def plot_spectral_curve(self, spatial_position=None):
-        """生成与spectral_plot.py相同格式的光谱曲线
+        """生成带有波长信息的光谱曲线
         Args:
             spatial_position: 空间位置索引，如果为None则使用中间位置
         """
@@ -398,7 +505,7 @@ class HySpexFileAnalyzer:
                 spatial_position = self.spatial_size // 2
 
             # 读取第一张图像
-            image = self.reader.getImage(512).view()
+            image = self.reader.getImage(0).view()
             image.shape = (self.spectral_size, self.spatial_size)
 
             # 获取指定位置的光谱数据
@@ -413,13 +520,20 @@ class HySpexFileAnalyzer:
             # 绘制光谱曲线
             plt.figure(figsize=(12, 6))
             
-            # 创建x轴数据（波段索引）
-            x = np.arange(len(spectral))
+            # 使用实际波长作为x轴
+            if self.wavelengths is not None:
+                x = self.wavelengths
+                plt.xlabel(f'Wavelength ({self.wavelength_unit})')
+                # 设置x轴刻度为波长值
+                plt.xticks(np.linspace(self.wavelengths[0], self.wavelengths[-1], 5))
+            else:
+                x = np.arange(len(spectral))
+                plt.xlabel('Bands')
+                plt.xticks(np.arange(0, len(spectral), 100))
             
             # 绘制光谱曲线
             plt.plot(x, spectral, '-', linewidth=1)
             
-            plt.xlabel('Bands')
             plt.ylabel('Relative spectral response')
             plt.title(description)
             plt.grid(True)
@@ -428,13 +542,12 @@ class HySpexFileAnalyzer:
             info_text = f'数据点数: {len(spectral)}\n'
             info_text += f'最大值: {np.max(spectral):.4f}\n'
             info_text += f'最小值: {np.min(spectral):.4f}'
+            if self.wavelengths is not None:
+                info_text += f'\n波长范围: {self.wavelengths[0]:.1f}-{self.wavelengths[-1]:.1f} {self.wavelength_unit}'
             plt.text(0.02, 0.98, info_text, 
                      transform=plt.gca().transAxes, 
                      verticalalignment='top',
                      bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-            
-            # 设置x轴刻度
-            plt.xticks(np.arange(0, len(spectral), 100))  # 每100个波段显示一个刻度
             
             plt.tight_layout()
             plt.show()
@@ -445,9 +558,17 @@ class HySpexFileAnalyzer:
             logger.info(f"  数据范围: [{np.min(spectral):.4f}, {np.max(spectral):.4f}]")
             logger.info(f"  平均值: {np.mean(spectral):.4f}")
             logger.info(f"  标准差: {np.std(spectral):.4f}")
+            if self.wavelengths is not None:
+                logger.info(f"  波长范围: {self.wavelengths[0]:.1f}-{self.wavelengths[-1]:.1f} {self.wavelength_unit}")
 
         except Exception as e:
             logger.error(f"生成光谱曲线时出错: {str(e)}")
+            # 添加更详细的错误信息
+            logger.error(f"错误详情: {str(e)}")
+            if self.wavelengths is not None:
+                logger.error(f"波长数据: 长度={len(self.wavelengths)}, 范围=[{self.wavelengths[0]}, {self.wavelengths[-1]}]")
+            else:
+                logger.error("未找到波长数据")
 
     def close(self):
         """关闭文件读取器"""
@@ -462,18 +583,21 @@ class HySpexFileAnalyzer:
 
 def main():
     # 文件路径
-    file_path = r"E:\software_devolpment\XXW-1  2  3_Baldur_S-384N_SN12013_254us_2025-03-24T024057_raw.hyspex"
+    file_path = r"E:\software_devolpment\download__20250325\lihui_rock\DN\1_Baldur_S-384N_SN12013_297us_2025-03-05T174104_raw.hyspex"
+    hdr_path = r"E:\software_devolpment\download__20250325\lihui_rock\DN\1_Baldur_S-384N_SN12013_297us_2025-03-05T174104_raw.hdr"
 
     try:
         analyzer = HySpexFileAnalyzer()
         if analyzer.open_file(file_path):
+            # 读取HDR文件
+            analyzer.read_hdr_file(hdr_path)
             # 显示第一张图像的所有可视化方式
             analyzer.display_image(0, display_mode='all')
             # 显示波段维度的分布
             analyzer.display_band_dimension()
             # 显示特定波段的空间分布
             analyzer.display_band_slice(band_index=100)  # 显示第100个波段
-            # 生成与spectral_plot相同格式的光谱曲线
+            # 生成带有波长信息的光谱曲线
             analyzer.plot_spectral_curve(spatial_position=192)  # 显示中间位置的光谱曲线
     except Exception as e:
         logger.error(f"程序执行出错: {str(e)}")
